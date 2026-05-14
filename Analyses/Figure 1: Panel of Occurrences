@@ -1,0 +1,127 @@
+library(sf)
+library(tidyverse)
+library(rnaturalearth)
+library(patchwork)
+library(ggtext)
+library(ggspatial)
+
+PROJ_CRS <- 27700 
+
+# Map Layers (Modified to union UK and Ireland, removing internal borders)
+uk_land_raw <- ne_countries(scale = 10, country = "united kingdom", returnclass = "sf") %>%
+  st_transform(PROJ_CRS) %>%
+  st_make_valid()
+
+ireland_raw <- ne_countries(scale = 10, country = "ireland", returnclass = "sf") %>%
+  st_transform(PROJ_CRS) %>%
+  st_make_valid()
+
+# Combine into one geometry to remove internal borders
+combined_islands <- st_union(uk_land_raw, ireland_raw) %>%
+  st_make_valid()
+
+# Coords
+output_bbox_poly <- st_bbox(c(xmin = -9, xmax = 1, ymin = 54.5, ymax = 61), crs = 4326) %>%
+  st_as_sfc() %>%
+  st_transform(PROJ_CRS)
+
+shared_limits <- coord_sf(
+  xlim = st_bbox(output_bbox_poly)[c("xmin", "xmax")],
+  ylim = st_bbox(output_bbox_poly)[c("ymin", "ymax")],
+  crs = PROJ_CRS, 
+  expand = FALSE
+)
+
+# Data Processing
+process_species_data <- function(url) {
+  read_csv(url, show_col_types = FALSE) %>%
+    rename_with(tolower) %>%
+    rename(lon = matches("long|lng"), lat = matches("lat")) %>%
+    filter(!is.na(lon) & !is.na(lat)) %>%
+    st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
+    st_transform(PROJ_CRS)
+}
+
+otters_sf   <- process_species_data("https://raw.githubusercontent.com/Brandothehuman/Otter_Seagrass_Manuscript/main/Output/Processed/otter_sightings_cleaned.csv")
+seagrass_sf <- process_species_data("https://raw.githubusercontent.com/Brandothehuman/Otter_Seagrass_Manuscript/main/Output/Processed/seagrass_meadows_cleaned.csv")
+crabs_sf    <- process_species_data("https://raw.githubusercontent.com/Brandothehuman/Otter_Seagrass_Manuscript/main/Output/Processed/crab_sightings_cleaned.csv")
+
+# Formatting
+axis_weight <- 0.8
+
+map_theme <- theme_bw(base_family = "serif", base_size = 12) +
+  theme(
+    panel.grid.major    = element_blank(),
+    panel.grid.minor    = element_blank(),
+    panel.border        = element_blank(),
+    axis.line.x.bottom = element_line(color = "black", linewidth = axis_weight),
+    axis.line.y.left   = element_line(color = "black", linewidth = axis_weight),
+    axis.ticks         = element_line(color = "black", linewidth = axis_weight),
+    axis.ticks.length  = unit(0.15, "cm"),
+    axis.text          = element_text(size = 9, family = "serif"),
+    plot.title          = element_text(size = 12, family = "serif")
+  )
+
+add_box <- function(plot) {
+  plot +
+    annotate("segment", x = -Inf, xend = Inf, y = Inf, yend = Inf, color = "black", linewidth = 0.3) +
+    annotate("segment", x = Inf, xend = Inf, y = -Inf, yend = Inf, color = "black", linewidth = 0.3)
+}
+
+add_map_annotations <- function(plot) {
+  plot +
+    annotation_scale(
+      location      = "br",
+      width_hint    = 0.25,
+      style         = "bar",
+      line_width    = 0.5,
+      text_family   = "serif",
+      text_cex      = 0.7,
+      unit_category = "metric"
+    ) +
+    annotation_north_arrow(
+      location    = "tr",
+      which_north = "grid",
+      height = unit(0.6, "cm"),
+      width  = unit(0.4, "cm"),
+      style  = north_arrow_orienteering(
+        fill     = c("black", "white"),
+        text_col = "transparent"
+      )
+    )
+}
+
+# Create Panels 
+p1 <- ggplot() +
+  geom_sf(data = combined_islands, fill = "gray95", color = "gray80") +
+  geom_sf(data = otters_sf, color = "steelblue", size = 0.3, alpha = 0.4) +
+  shared_limits + map_theme + labs(title = "A", x = NULL, y = NULL)
+p1 <- add_map_annotations(add_box(p1))
+
+p2 <- ggplot() +
+  geom_sf(data = combined_islands, fill = "gray95", color = "gray80") +
+  geom_sf(data = seagrass_sf, color = "seagreen", size = 0.3, alpha = 0.4) +
+  shared_limits + map_theme + labs(title = "B", x = NULL, y = NULL)
+p2 <- add_map_annotations(add_box(p2))
+
+p3 <- ggplot() +
+  geom_sf(data = combined_islands, fill = "gray95", color = "gray80") +
+  geom_sf(data = crabs_sf, color = "orange", size = 0.3, alpha = 0.4) +
+  shared_limits + map_theme + labs(title = "C", x = NULL, y = NULL)
+p3 <- add_map_annotations(add_box(p3))
+
+
+final_plot <- (p1 | p2 | p3)
+
+
+ggsave(
+  filename = "Figure_1.png", 
+  plot = final_plot, 
+  dpi = 600, 
+  width = 15, 
+  height = 7, 
+  units = "in",
+  bg = "white"
+)
+
+print (final_plot)
