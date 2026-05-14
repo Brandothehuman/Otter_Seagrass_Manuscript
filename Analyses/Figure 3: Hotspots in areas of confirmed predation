@@ -1,0 +1,157 @@
+library(sf)
+library(tidyverse)
+library(rnaturalearth)
+library(ggtext)
+library(ggspatial)
+
+# Coordinate Masks
+make_mask <- function(xmin, xmax, ymin, ymax) {
+  st_bbox(c(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), crs = 4326) %>%
+    st_as_sfc()
+}
+
+island_masks <- list(
+  "Skye"       = make_mask(-6.77, -5.73, 57.01, 57.70),
+  "Pabay"      = make_mask(-5.87, -5.84, 57.26, 57.28),
+  "Barra"      = make_mask(-7.55, -7.34, 56.92, 57.05),
+  "Tiree"      = make_mask(-7.02, -6.77, 56.45, 56.57),
+  "Coll"       = make_mask(-6.72, -6.39, 56.55, 56.71),
+  "Mull"       = make_mask(-6.40, -5.55, 56.25, 56.70),
+  "Eigg"       = make_mask(-6.22, -6.06, 56.86, 56.94),
+  "Loch Long"  = make_mask(-4.90, -4.75, 56.00, 56.20),
+  "Holy Loch"  = make_mask(-4.97, -4.88, 55.98, 56.05),
+  "Loch Goil"  = make_mask(-4.92, -4.82, 56.12, 56.22),
+  "Loch Broom" = make_mask(-5.35, -5.05, 57.80, 57.95),
+  "Shetland"   = make_mask(-1.80, -0.70, 59.80, 60.90)
+)
+
+all_islands_mask <- do.call(c, island_masks) %>% st_union()
+highlight_masks  <- island_masks[names(island_masks) != "Tiree"]
+highlight_union  <- do.call(c, highlight_masks) %>% st_union()
+
+highlight_boxes <- do.call(rbind, lapply(names(highlight_masks), function(nm) {
+  bb <- st_bbox(st_transform(highlight_masks[[nm]], 27700))
+  data.frame(xmin = bb["xmin"], xmax = bb["xmax"], ymin = bb["ymin"], ymax = bb["ymax"])
+}))
+
+# Geo Labels
+island_labels <- data.frame(
+  name = c("Skye", "Pabay", "Barra",
+           "Tiree", "Coll", "Mull", "Eigg",
+           "Loch Long", "The Holy Loch", "Loch Goil", "Loch Broom", "Shetland"),
+  lon  = c(-6.25, -5.80, -7.70, -7.10, -6.55, -5.93, -6.14,
+           -4.25, -5.55, -4.87, -5.20, -1.25),
+  lat  = c(57.45, 57.35, 57.08, 56.50, 56.74, 56.47, 56.90,
+            56.10, 56.02, 56.24, 57.98, 60.95)
+) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>%
+  st_transform(27700)
+
+# Load Data
+otter_url <- "https://raw.githubusercontent.com/Brandothehuman/Otter_Seagrass_Manuscript/main/Output/Processed/otter_sightings_cleaned.csv"
+crab_url  <- "https://raw.githubusercontent.com/Brandothehuman/Otter_Seagrass_Manuscript/main/Output/Processed/crab_sightings_cleaned.csv"
+grass_url <- "https://raw.githubusercontent.com/Brandothehuman/Otter_Seagrass_Manuscript/main/Output/Processed/seagrass_meadows_cleaned.csv"
+
+otters <- read_csv(otter_url) %>%
+  filter(!is.na(Longitude) & !is.na(Latitude)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  st_filter(all_islands_mask)
+
+seagrass <- read_csv(grass_url) %>%
+  filter(!is.na(LONGITUDE) & !is.na(LATITUDE)) %>%
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326) %>%
+  st_filter(all_islands_mask)
+
+crabs <- read_csv(crab_url) %>%
+  filter(!is.na(`Longitude (WGS84)`) & !is.na(`Latitude (WGS84)`)) %>%
+  st_as_sf(coords = c("Longitude (WGS84)", "Latitude (WGS84)"), crs = 4326) %>%
+  st_filter(all_islands_mask)
+
+# Hotspots
+otters_p   <- st_transform(otters,   27700)
+seagrass_p <- st_transform(seagrass, 27700)
+crabs_p    <- st_transform(crabs,    27700)
+
+has_crabs          <- st_is_within_distance(seagrass_p, crabs_p, dist = 100)
+meadows_with_crabs <- seagrass_p[lengths(has_crabs) > 0, ]
+near_otter         <- st_is_within_distance(meadows_with_crabs, otters_p, dist = 19300)
+hotspots_p         <- meadows_with_crabs[lengths(near_otter) > 0, ]
+
+uk_land_p         <- ne_countries(scale = 10, country = "united kingdom", returnclass = "sf") %>%
+                       st_transform(27700)
+highlight_union_p <- st_transform(highlight_union, 27700)
+seagrass_plot_p   <- seagrass_p
+hotspots_plot_p   <- hotspots_p
+
+# Convert lon/lat extent to 27700 for coord_sf
+bbox_4326 <- st_bbox(c(xmin = -9.5, xmax = 0.5, ymin = 55.8, ymax = 61.2), crs = 4326) %>%
+  st_as_sfc() %>%
+  st_transform(27700) %>%
+  st_bbox()
+
+axis_weight <- 0.8
+
+ggplot() +
+  geom_sf(data = uk_land_p, fill = "gray95", color = "gray80") +
+  geom_rect(
+    data = highlight_boxes,
+    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+    fill      = "#2166ac",
+    color     = "#2166ac",
+    alpha     = 0.15,
+    linewidth = 0.4
+  ) +
+  geom_sf(data = hotspots_plot_p, color = "red",      size = 3,   shape = 18) +
+  geom_sf_text(
+    data      = island_labels,
+    aes(label = name),
+    size      = 3.2,
+    fontface  = "italic",
+    color     = "gray25",
+    nudge_y   = 5000
+  ) +
+  annotation_scale(
+    location      = "br",
+    width_hint    = 0.25,
+    style         = "bar",
+    line_width    = 0.5,
+    text_family   = "serif",
+    text_cex      = 0.7,
+    unit_category = "metric"
+  ) +
+  annotation_north_arrow(
+    location    = "tr",
+    which_north = "grid",
+    height = unit(0.6, "cm"),
+    width  = unit(0.4, "cm"),
+    style  = north_arrow_orienteering(
+      fill     = c("black", "white"),
+      text_col = "transparent"
+    )
+  ) +
+  coord_sf(
+    crs    = 27700,
+    xlim   = c(bbox_4326["xmin"], bbox_4326["xmax"]),
+    ylim   = c(bbox_4326["ymin"], bbox_4326["ymax"]),
+    expand = FALSE
+  ) +
+  theme_bw(base_family = "serif", base_size = 12) +
+  labs(
+    x = NULL,
+    y = NULL
+  ) +
+  theme(
+    panel.grid.major    = element_blank(),
+    panel.grid.minor    = element_blank(),
+    panel.border        = element_blank(),
+    axis.line.x.bottom  = element_line(color = "black", linewidth = axis_weight),
+    axis.line.y.left    = element_line(color = "black", linewidth = axis_weight),
+    axis.ticks          = element_line(color = "black", linewidth = axis_weight),
+    axis.ticks.length   = unit(0.15, "cm"),
+    axis.text           = element_text(size = 9, family = "serif"),
+    plot.margin         = margin(10, 20, 10, 20)
+  ) +
+  annotate("segment", x = -Inf, xend = Inf, y = Inf,  yend = Inf,  color = "black", linewidth = 0.3) +
+  annotate("segment", x = Inf,  xend = Inf, y = -Inf, yend = Inf,  color = "black", linewidth = 0.3)
+ggsave("Figure_3.png", plot = last_plot(), dpi = 600, width = 8, height = 10, units = "in")
+
