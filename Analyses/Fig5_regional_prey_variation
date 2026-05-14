@@ -1,0 +1,80 @@
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+diet_data <- data.frame(
+  Location = c("Skye", "Pabay", "Barra", "Eigg", "Tiree", "Coll", 
+               "Loch Broom", "Shetland", "Mull", "Loch Long & Holy Loch", "Loch Goil"),
+  Gadoids = c(427.72, 4.515, 7.1, 19.46, 2.436, 6.6, 10.7, 528.06, 163.818, 2.3332, 1),
+  Blennies = c(432.16, 3.39, 4, 6.95, 3.84, 4.6, 9.65, 686.478, 48.858, 2.5745, 4.25),
+  Cottids = c(81.4, 0.54, 0.48, 15.29, 0, 1.04, 0, 357.456, 113.044, 0.7771, 0),
+  Eels = c(134.68, 0.645, 1.5, 6.95, 1.572, 0.84, 4.3, 4.062, 71.85, 1.5542, 2.75), 
+  Mammals = c(13.32, 1.335, 1.28, 11.12, 0.924, 1.9, 1.05, 2.031, 0, 0.2432, 0.25),
+  Butterfish = c(148, 1.365, 1.7, 16.68, 1.74, 2.04, 5.7, 201.069, 247.164, 2.8177, 2),
+  Flatfish = c(74, 0.96, 2.4, 20.85, 0.984, 2.08, 3.95, 38.589, 29.698, 0.2432, 2.25),
+  Crab_Group = c(53.28, 0.405, 0.2, 12.51, 0, 0.4, 8.95, 60.93, 69.934, 1.0203, 1.25),
+  Birds = c(16.28, 0.525, 0.32, 25.02, 0, 0.68, 1.05, 0, 0, 0.5339, 0.25),
+  Other = c(99.16, 1.32, 1.02, 4.17, 0.504, 0, 4.65, 146.232, 213.634, 6.9008, 6)
+)
+
+diet_long <- diet_data %>%
+  rename(`Green shore crab` = Crab_Group) %>%
+  pivot_longer(-Location, names_to = "Prey", values_to = "Value") %>%
+  group_by(Location) %>%
+  mutate(Proportion = Value / sum(Value))
+
+contingency_table <- as.matrix(diet_data[, -1])
+set.seed(123)
+chisq_test <- chisq.test(contingency_table, simulate.p.value = TRUE, B = 2000)
+
+base_cols <- c(
+  "seagreen3", "seagreen4",
+  "cadetblue3",
+  "steelblue3", "steelblue4",
+  "lightskyblue4",
+  "goldenrod2",
+  "darkorange2", "chocolate2"
+)
+
+n_prey <- length(unique(diet_long$Prey))
+color_palette <- colorRampPalette(base_cols)(n_prey)
+names(color_palette) <- sort(unique(diet_long$Prey))
+color_palette["Other"] <- "#CC5500" 
+
+final_plot <- ggplot(diet_long, aes(x = Location, y = Proportion, fill = Prey)) +
+  geom_bar(
+    stat = "identity",
+    color = "black",
+    linewidth = 0.3,
+    width = 0.75 
+  ) +
+  scale_fill_manual(values = color_palette, name = "Prey Group") +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(expand = expansion(add = 0.6)) +
+  theme_classic() +
+  theme(
+    text = element_text(family = "serif", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(family = "serif"),
+    legend.text = element_text(family = "serif"),
+    plot.title = element_blank(),
+    plot.subtitle = element_blank(),
+    plot.caption = element_blank()
+  ) +
+  labs(
+    x = "Sampling Location",
+    y = "Relative Frequency of Prey Group (%)"
+  )
+
+print(final_plot)
+print(chisq_test)
+
+ggsave(
+  filename = "Figure_5.png", 
+  plot = final_plot, 
+  dpi = 600, 
+  width = 8, 
+  height = 6, 
+  units = "in",
+  bg = "white"
+)
